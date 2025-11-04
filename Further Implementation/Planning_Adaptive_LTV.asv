@@ -1,0 +1,391 @@
+%% SCRIPT TO SIMULATE PATH PLANNING AND TRAJECTORY FOLLOWING
+% =========================================================================
+% This script models, controls, and simulates a 3D ball-bot.
+%
+% Architecture:
+%   - Path Planner: RRT* algorithm to find a collision-free path.
+%   - %% --- MODIFIED --- %%
+%   - Control System:
+% This script uses our full suite of modular and auto-generated functions.
+% =========================================================================
+%% PART 0: SCRIPT INITIALIZATION
+clear; clc; close all;
+addpath('function'); 
+%% PART 1: SYSTEM PARAMETERS
+% -------------------------------------------------------------------------
+ur5e_mass = 20.7;
+robotiq_gripper_mass = 1;
+
+p.h_U = 0.50;      % m (Sphere and Chassis estimated height)
+p.m_S = 3.6;       % kg (Sphere mass)
+p.I_S = 0.047;     % kgm^2 (Sphere inertia)
+p.r_S = 0.1145;    % m (Sphere radius)
+p.m_C = 17.9 - p.m_S; %kg (Chassis mass)
+p.COM_C = (p.h_U-2*p.r_S)/2+p.r_S;         % m (Chassis COM height) 
+p.m_R = ur5e_mass + robotiq_gripper_mass;
+p.COM_R= 0.7649;          % m (Manipulator COM height)
+p.m_U = p.m_C + p.m_R;      % kg (Upper body mass)
+p.I_Ux = 0.1848 + 14.4706;      % kgm^2  Upper body Roll inertia)
+p.I_Uy = 0.1848 + 15.0733;      % kgm^2 (Upper body Pitch inertia)
+p.Iz = 0.0085 + 1.2023;        % kgm^2 (Upper body Yaw inertia)
+p.l_U = (p.m_C * p.COM_C + p.m_R * p.COM_R) / p.m_U;      % m (Upper body COM height) (Include manipulator effect)
+p.g = 9.81;        % m/s^2 (Gravitational acceleration)
+p.b_theta = 0.0;   % Nms/rad (Viscous friction on tilt)
+p.b_phi = 1;     % Nms/rad (Viscous friction on sphere rolling)
+p.fz = 1;        % Nms/rad (Viscous friction on yaw)
+p.r_ow=0.0625;     % m (ow radius)
+
+% Calculate the distance between the center of the sphere and the force's application point
+p.h_app = p.h_U - p.r_S; % Distance from the center of the sphere to the force application point
+%% PART 2: BUILD THE LINEARIZED MODEL
+% --- Step 1: Linearize the Dynamic Model Around different trim points, theta = [-15°,15] ---
+[A_roll, B_roll, A_pitch, B_pitch, A_spin, B_spin] = create_LPV_linearizer(p);
+
+% Step 2: Pass those handles to the new function to get the K handles.
+[Ks, Kf, Ky] = create_K_handlers(A_roll, B_roll, A_pitch, B_pitch, A_spin, B_spin);
+
+% Step 3: Pass all handles to the last function to get closed loop Matrix.
+[Am_x, Bm_x, Cm_x, Dm_x, Pm_x] = create_CL_functions_from_handlers(A_roll, B_roll, Ks,'saggital');
+[Am_y, Bm_y, Cm_y, Dm_y, Pm_y] = create_CL_functions_from_handlers(A_pitch, B_pitch, Kf,'frontal');
+[Am_z, Bm_z, Cm_z, Dm_z, Pm_z] = create_CL_functions_from_handlers(A_spin, B_spin, Ky,'yaw');
+
+
+
+
+
+%% PART 3: PATH PLANNING
+% Creation of a scalable 2D environment and path planning using RRT*.
+% -------------------------------------------------------------------------
+disp('Planning path through obstacle map...');
+% --- Step 3.1: Define Map Scale and Base Geometry ---
+map_scale = 0.5; % Change this value to resize the environment (e.g., 0.5 for half size, 2.0 for double)
+base_map_size = [10, 10];               % Base size of the map in meters
+base_obstacles_def = [2 1 2 4; 6 5 3 2]; % Base obstacle definitions [x y width height]
+base_start_pos = [1, 1];
+base_goal_pos = [8, 9];
+% --- Step 3.2: Apply Scaling ---
+map_size = base_map_size * map_scale;
+obstacles_def = base_obstacles_def * map_scale;
+% start_pos = base_start_pos * map_scale;
+start_pos = [0; 0];
+goal_pos = base_goal_pos * map_scale;
+% --- Step 3.3: Create the Map ---
+map_resolution = 100; % cells/meter. Too low cause fail in planning
+map = binaryOccupancyMap(map_size(1), map_size(2), map_resolution);
+all_obstacle_points = [];
+for k = 1:size(obstacles_def, 1)
+    rect = obstacles_def(k, :);
+    x_min = rect(1); y_min = rect(2);
+    x_max = rect(1) + rect(3); y_max = rect(2) + rect(4);
+    [X, Y] = meshgrid(x_min:1/map.Resolution:x_max, y_min:1/map.Resolution:y_max);
+    obstacle_points = [X(:), Y(:)];
+    all_obstacle_points = [all_obstacle_points; obstacle_points];
+end
+setOccupancy(map, all_obstacle_points, 1); %Fill obstacle cell's
+%Inflation map around obstacles. sphere_radius + safety margin
+%Needed becouse RRT plan trajectory for sphere's center
+inflate(map, p.r_S + 0.15 * map_scale); % Scale safety margin as well
+% --- Step 3.4: Define State Space, Validator, and Planner ---
+ss = stateSpaceSE2;
+sv = validatorOccupancyMap(ss);
+sv.Map = map;
+sv.ValidationDistance = 0.1* map_scale;
+planner = plannerRRTStar(ss, sv);
+planner.MaxConnectionDistance = 0.5 * map_scale; %
+planner.GoalReachedFcn = @(planner, q, q_target) norm(q(1:2) - q_target(1:2)) < 0.1 * map_scale;
+planner.ContinueAfterGoalReached=true;
+planner.GoalBias = 0.01;   % only 1% of the time sample the goal
+planner.MaxIterations = 100000; %(default: 10000)
+% --- Step 3.5: Plan the Path ---
+start_state = [start_pos(1) start_pos(2) 0];
+goal_state = [goal_pos(1) goal_pos(2) 0];
+rng(100, 'twister'); % for repeatable results
+[pathObj, solnInfo] = plan(planner, start_state, goal_state);
+if ~solnInfo.IsPathFound
+    error('No path found. Try adjusting planner parameters or map layout.');
+end
+waypoints = pathObj.States(:, 1:2);
+t = 0:1:size(waypoints,1)-1;
+waypoints_ts = timeseries(waypoints, t);
+% --- Visualize the Planned Path ---
+figure('Name', 'Planned Path with RRT* Exploration');
+show(map);
+hold on;
+plot(solnInfo.TreeData(:,1), solnInfo.TreeData(:,2), '.-', 'Color',[.7 .7 .7]);
+plot(waypoints(:,1), waypoints(:,2), 'g-', 'LineWidth', 2);
+plot(start_pos(1), start_pos(2), 'bo', 'MarkerFaceColor', 'b', 'MarkerSize', 8);
+plot(goal_pos(1), goal_pos(2), 'r*', 'MarkerSize', 10, 'LineWidth', 2);
+title('Planned Path with RRT* Exploration');
+legend('Explored Tree', 'Final Path', 'Start', 'Goal', 'Location', 'best');
+hold off;
+
+%% PART 4: TRAJECTORY FOLLOWING SIMULATION (All-Simulink Version)
+% -------------------------------------------------------------------------
+disp('Running all-Simulink trajectory following simulation...');
+
+% --- Setup Simulation Parameters in MATLAB Workspace ---
+x0 = zeros(10, 1); % Initial state vector
+x0(1) = 0;
+x0(7) = start_pos(1) / p.r_S; % Initial phi_y for x-position
+x0(3) = -start_pos(2) / p.r_S; % Initial phi_x for y-position
+
+
+% Define simulation time parameters
+t_end = t(end)+6; % Max simulation time (seconds)
+dt = 0.01;  % Time step for the simulation (seconds)
+% dt = 0.0001
+% --- Adaptive Controller Parameters ---
+% Adaptation gains (Tuning Knobs!)
+alpha = 50;
+beta = 5;  
+gamma = 10;            
+
+ 
+%% Manipulator SetUp
+modelName = 'untitled1';
+manipulator_sim;
+open_system(modelName);
+
+% --- Run the Simulink Simulation ---
+% Configure the manipulator before:
+simOut = sim(modelName, 'StopTime', num2str(t_end), 'FixedStep', num2str(dt));
+
+disp('Simulation complete.');
+
+
+%% PART 5: PLOTTING AND ANIMATION
+% -------------------------------------------------------------------------
+% The simulation results are now in the 'simOut' object.
+% We can access the logged data using the names of the 'To Workspace' blocks.
+
+t_full = simOut.tout;
+
+
+x_full = permute(simOut.x_sim.signals.values,[3 1 2]);
+e_full = permute(simOut.e_sim.signals.values,[3 1 2]); 
+tau_input  = permute(simOut.tau_sim.signals.values,[1 2 3]); 
+
+K_hat = permute(simOut.K_hat_sim.signals.values,[3 2 1]);
+Kr_hat = permute(simOut.Kr_hat_sim.signals.values,[1 2 3]);
+Ke_hat = permute(simOut.Ke_hat_sim.signals.values,[1 2 3]);
+
+% --- Calculate Omni-Wheel Torques ---
+disp('Calculating omni-wheel torque history...');
+
+% Get the number of time steps from the columns
+num_time_steps = size(tau_input, 1); 
+
+% Pre-allocate the output matrix with the same orientation (3 x N)
+tau_history_ow_cols = zeros(num_time_steps,3); 
+
+% Loop through each TIME STEP (i.e., each column)
+for i = 1:num_time_steps
+    
+    % Get the i-th column, which is already the correct 3x1 format
+    current_tau_S_col = tau_input(i,:); 
+    
+    % Call your conversion function.
+    current_tau_W_col = T_3D_inv(p.r_S, p.r_ow, current_tau_S_col');
+    
+    % Store the 3x1 result in the i-th column of the output matrix.
+    tau_history_ow_cols(i,:) = current_tau_W_col';
+end
+disp('Calculation complete.');
+
+% --- FINAL TRANSPOSITION FOR PLOTTING ---
+% Your myplot function expects data in an N x 3 format (time in rows).
+% We must transpose our result matrices before passing them to the function.
+
+% tau_history_ow_for_plot = tau_history_ow_cols';
+
+Copy_of_myplot(t_full, x_full, r_fp, tau_input,tau_history_ow_cols);
+% animate(t_full, x_full, q_full, p, map_size,map_scale,waypoints,obstacles_def);
+
+%% ANIMATION FUNCTION
+function animate(t, x, q, p, map_size, map_scale, waypoints, obstacles_def)
+    % Generates a 3D animation of the ball-bot simulation results.
+    
+    % Setup the Figure and Axes
+    figure('Name', '3D Ball-Bot Animation', 'NumberTitle', 'off', 'Color', 'w');
+    ax = axes('DataAspectRatio',[1 1 1], 'Projection','perspective');
+    view(35, 25); hold on; grid on; box on;
+    xlabel('X Axis (m)'); ylabel('Y Axis (m)'); zlabel('Z Axis (m)');
+    % Adjust Z-axis limit to accommodate obstacle height
+    obstacle_height = 0.5 * map_scale; % Define a reasonable height for obstacles
+    margin = 0.4 * map_scale;
+    axis([0-margin map_size(1)+margin 0-margin map_size(2)+margin 0 obstacle_height + 1.0]);
+    light('Position',[2 2 3],'Style','infinite'); lighting gouraud;
+
+    %% --- Plot 3D Obstacles and 2D Inflation Zones ---
+    % Calculate the inflation radius
+    inflation_radius = p.r_S + 0.15 * map_scale;
+    
+    % Loop through each obstacle definition to draw it
+    for i = 1:size(obstacles_def, 1)
+        obs_rect = obstacles_def(i, :); % [x, y, width, height]
+        
+        % 1. Draw the 2D inflated area (flat on the ground)
+        plot_rounded_rectangle_2d(obs_rect, inflation_radius, [1 0.8 0.8], 0.5);
+
+        % 2. Draw the original 3D obstacle on top
+        x_obs = obs_rect(1); y_obs = obs_rect(2); w_obs = obs_rect(3); h_obs = obs_rect(4);
+        
+        % Vertices for a rectangular prism (cuboid)
+        verts = [
+            x_obs,      y_obs,      0;
+            x_obs+w_obs, y_obs,      0;
+            x_obs+w_obs, y_obs+h_obs, 0;
+            x_obs,      y_obs+h_obs, 0;
+            x_obs,      y_obs,      obstacle_height;
+            x_obs+w_obs, y_obs,      obstacle_height;
+            x_obs+w_obs, y_obs+h_obs, obstacle_height;
+            x_obs,      y_obs+h_obs, obstacle_height;
+        ];
+        
+        % Faces for a rectangular prism
+        faces = [
+            1 2 3 4; % Bottom face
+            5 6 7 8; % Top face
+            1 2 6 5; % Side face 1
+            2 3 7 6; % Side face 2
+            3 4 8 7; % Side face 3
+            4 1 5 8; % Side face 4
+        ];
+        
+        patch('Vertices', verts, 'Faces', faces, 'FaceColor', [0.6 0.2 0.2], 'EdgeColor', 'k', 'FaceLighting', 'gouraud');
+    end
+
+    % (The rest of your function, including robot model, paths, and animation loop, remains unchanged)
+    % ...
+
+    % Create the Graphical Model
+    robot_transform = hgtransform('Parent', ax);
+    % 1. Spherical Wheel
+    [sx, sy, sz] = sphere(40);
+    surf(p.r_S*sx, p.r_S*sy, p.r_S*sz, 'FaceColor', [0.1 0.1 0.1], 'EdgeColor', 'none', 'Parent', robot_transform, 'FaceLighting','gouraud','AmbientStrength',0.4);
+    
+    % 2. Main Body Components...
+    motor_radius = 0.05; motor_height = 0.07; omni_radius = p.r_ow;
+    omni_width = 0.04; chassis_dist = p.r_ow+p.r_S; angles = [0, 120, 240];
+    for i = 1:3
+        assembly_angle = angles(i) * pi/180;
+        assembly_transform = hgtransform('Parent', robot_transform, 'Matrix', makehgtform('zrotate', assembly_angle));
+        [cx,cy,cz] = cylinder(motor_radius, 20);
+        motor = surf(cx, cy, cz * motor_height, 'FaceColor', [0.5 0.5 0.6], 'EdgeColor', 'none');
+        T_motor = makehgtform('translate', [chassis_dist*cos(pi/4), 0, chassis_dist*sin(pi/4)]);
+        set(motor, 'Parent', hgtransform('Parent', assembly_transform, 'Matrix', T_motor))
+        [ox,oy,oz] = cylinder(omni_radius, 20);
+        omni = surf(ox, oy, (oz - 0.5) * omni_width, 'FaceColor', [0.3 0.3 0.3], 'EdgeColor', 'none');
+        T_omni_translate = makehgtform('translate', [chassis_dist*cos(pi/4), 0, chassis_dist*sin(pi/4)]);
+        T_omni_tilt = makehgtform('yrotate', -pi/4);
+        set(omni, 'Parent', hgtransform('Parent', assembly_transform, 'Matrix', T_omni_translate * T_omni_tilt));
+    end
+    
+    % 3. Top Hexagonal Frame...
+    hex_radius = 0.18; hex_height = 0.20; hex_thick = 0.02; hex_verts = zeros(12, 3);
+    for i = 1:6
+        angle = (i-1)*60*pi/180;
+        hex_verts(i, :) = [hex_radius*cos(angle), hex_radius*sin(angle), hex_height];
+        hex_verts(i+6, :) = [hex_radius*cos(angle), hex_radius*sin(angle), hex_height+hex_thick];
+    end
+    hex_faces = [1 2 8; 1 8 7; 2 3 9; 2 9 8; 3 4 10; 3 10 9; 4 5 11; 4 11 10; 5 6 12; 5 12 11; 6 1 7; 6 7 12; 1 2 3; 1 3 4; 1 4 5; 1 5 6; 7 8 9; 7 9 10; 7 10 11; 7 11 12];
+    patch('Vertices', hex_verts, 'Faces', hex_faces, 'FaceColor', [0.7 0.7 0.75], 'Parent', robot_transform);
+    
+    % %%ADDITION
+    % 4. Add UR5e manipulator on top
+    meshPath = 'C:\Users\chiar_zjcy1by\MATLAB Drive\FieldProject\generated\ros_packages\meshes';
+    ur5e = importrobot("UR5e.urdf", 'MeshPath', {meshPath});
+    ur5e.DataFormat = 'row';  ur5e.Gravity = [0 0 -9.81];   
+    ur5e.removeBody('base');
+    ur5e.removeBody('ground_plane');
+    % New tree
+    ur5e_mobile = rigidBodyTree('DataFormat','row');
+
+    % Dummy base with floating joint
+    dummyBase = rigidBody("mobile_base");
+    jnt = rigidBodyJoint("float1","floating");
+    dummyBase.Joint = jnt;
+
+    addBody(ur5e_mobile, dummyBase, "base");
+    addSubtree(ur5e_mobile, "mobile_base", ur5e); 
+
+    % Create an hgtransform to carry the manipulator base
+    mount_height = hex_height + hex_thick;
+    pos = [1 0 0 0 0 0 mount_height];  
+    q0 = [pos 0 -2.356 2.356 -1.57 -1.57 0];  % your desired start config
+    show(ur5e_mobile, q0, 'Parent', ax, 'Frames','off','PreservePlot',false,'Visuals','on');
+    %%STOP ADDITION
+
+
+    % Plot the full trajectory path on the ground
+    pos_x_history = p.r_S * x(:,7);
+    pos_y_history = -p.r_S * x(:,3);
+    h_actual = plot3(pos_x_history, pos_y_history, zeros(size(pos_x_history)), 'g-', 'LineWidth', 1.5);
+    h_ref = plot3(waypoints(:,1), waypoints(:,2), zeros(size(waypoints(:,1))), 'b--', 'LineWidth', 2);
+    
+    % --- Update Legend ---
+    h_inf = patch(NaN, NaN, [1 0.8 0.8], 'FaceAlpha', 0.5, 'EdgeColor', 'none');
+    h_obs = patch(NaN, NaN, NaN, 'FaceColor', [0.6 0.2 0.2], 'EdgeColor', 'k');
+    legend([h_actual, h_ref, h_obs, h_inf], ...
+           'Actual Path', 'Reference Path', 'Obstacle', 'Inflation Zone', 'Location', 'northwest');
+    
+    % Animation Loop
+    disp('Starting animation...');
+    for k = 1:5:length(t)
+        theta_x_k = x(k, 1); theta_y_k = x(k, 5); theta_z_k = x(k, 9);
+        quat = eul2quat([theta_x_k, theta_y_k, theta_z_k], 'XYZ'); 
+        phi_x_k = x(k, 3); phi_y_k = x(k, 7);
+       
+        pos_x = p.r_S * phi_y_k;
+        pos_y = -p.r_S * phi_x_k;
+        pos_z = p.r_S;
+        
+        q_k = [quat, pos_x, pos_y, pos_z+mount_height, q(k,:)];
+
+        T_translate = makehgtform('translate', [pos_x, pos_y, pos_z]);
+        T_rot_z = makehgtform('zrotate', theta_z_k);
+        T_rot_y = makehgtform('yrotate', theta_y_k);
+        T_rot_x = makehgtform('xrotate', theta_x_k);
+
+        robot_transform.Matrix = T_translate * T_rot_z * T_rot_y * T_rot_x;
+
+        show(ur5e_mobile, q_k, 'Parent', ax, 'Frames','off','PreservePlot',false,'Visuals','on');
+
+        title(ax, sprintf('Ball-Bot Simulation | Time: %.2f s', t(k)));
+        drawnow;
+        pause(0.01);
+    end
+    disp('Animation complete.');
+end
+
+function plot_rounded_rectangle_2d(rect, r, face_color, face_alpha)
+    % Plots a 2D rounded rectangle on the z=0 plane.
+    % rect: [x, y, w, h] of the base rectangle
+    % r: radius of the corners
+    
+    x = rect(1); y = rect(2); w = rect(3); h = rect(4);
+    
+    % Define angles for a smooth quarter circle
+    t = linspace(0, pi/2, 25);
+    
+    % Generate points for each corner arc
+    x_tr = (x + w) + r * cos(t);
+    y_tr = (y + h) + r * sin(t);
+    
+    x_tl = x + r * cos(t + pi/2);
+    y_tl = (y + h) + r * sin(t + pi/2);
+    
+    x_bl = x + r * cos(t + pi);
+    y_bl = y + r * sin(t + pi);
+    
+    x_br = (x + w) + r * cos(t + 3*pi/2);
+    y_br = y + r * sin(t + 3*pi/2);
+    
+    % Combine all vertices into a single polygon
+    verts_x = [x_tr, x_tl, x_bl, x_br];
+    verts_y = [y_tr, y_tl, y_bl, y_br];
+    
+    % Plot the filled shape on the ground (z=0)
+    patch(verts_x, verts_y, zeros(size(verts_x)), face_color, ...
+          'FaceAlpha', face_alpha, 'EdgeColor', 'none');
+end
