@@ -203,11 +203,32 @@ These can be loaded in MATLAB and analyzed through the provided functions in `an
 
 ---
 
-## Credits
-Developed by **Roberto Rocco** and by **Chiara Panagrosso** as part of the Master’s project in Automation and Robotics Engineering at the University of Naples.
+## 🧾 Credits
 
-For further details, see the attached report:
+Developed by **Roberto Rocco** and **Chiara Panagrosso** as part of the Master’s project in *Automation and Robotics Engineering* at the **University of Naples Federico II**.
+
+For further details and theoretical background, see the attached report:  
 **FSR_Project_Rocco_Panagrosso.pdf**
+
+### 📚 Contribution Summary
+
+**Chapter 2 — System Modeling and Dynamics**  
+*Chiara*: Derived and validated the mathematical model of the ballbot and analyzed the system’s dynamic behavior.
+
+**Chapter 3 — Planning and Trajectory Generation**  
+*Chiara*: Implemented geometric path planning (RRT\*) and manipulator trajectory generation using MoveIt Task Constructor.  
+*Roberto*: Developed the velocity trajectory generation module and path-following logic for the mobile base.
+
+**Chapter 4 — Control Architectures**  
+*Chiara*: Designed and tested the Model Reference Adaptive Control (MRAC) strategy for the ballbot base.  
+*Roberto*: Implemented and tuned the LQR and cascaded LQR–PI control architectures.
+
+**Chapter 5 — Hybrid Control and Interaction**  
+*Chiara*: Modeled the external interaction between manipulator and base, implemented yaw control and the compensation module.  
+*Roberto*: Developed the hybrid control logic, defined operational phases, tuned parameters, and implemented the operational-space feedback compensation.
+
+---
+
 
 Contact: `roby.rocco01@gmail.com`
 
