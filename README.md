@@ -227,10 +227,6 @@ For further details and theoretical background, see the attached report:
 *Chiara*: Modeled the external interaction between manipulator and base, implemented yaw control and the compensation module.  
 *Roberto*: Developed the hybrid control logic, defined operational phases, tuned parameters, and implemented the operational-space feedback compensation.
 
----
-
-
-Contact: `roby.rocco01@gmail.com`
 
 ---
 
