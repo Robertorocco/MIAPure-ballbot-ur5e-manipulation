@@ -1,4 +1,4 @@
-# MIAPure — Ballbot (UR5e) Manipulation Simulation
+# 🤖 MIAPure — Ballbot (UR5e) Manipulation Simulation
 
 ## Overview
 This repository implements a complete simulation, planning and control framework for a **ballbot equipped with a UR5e manipulator** and a **Robotiq 2F-85 gripper**.  
@@ -15,7 +15,7 @@ The implemented framework integrates:
 
 ---
 
-## Introduction & Goals
+## 🎯 Introduction & Goals
 The goal of the project is to study and simulate **mobile manipulation** on a ballbot platform — a self-balancing robot whose dynamics resemble a 3D inverted pendulum.  
 The main challenges addressed are:
 - Stability control under actuation coupling.
@@ -27,7 +27,7 @@ The repository includes everything needed to reproduce the simulations and analy
 
 ---
 
-## Implemented Features
+## ⚙️ Implemented Features
 
 ### 1. Dynamic Modeling
 - Lagrangian derivation of the ballbot dynamics, decoupled into sagittal, frontal, and transverse planes.
@@ -74,50 +74,49 @@ This enables rejection of slow-varying external wrenches such as those generated
 
 ## Repository Structure
 
-Below is a detailed map of the repository’s folders and scripts, including the original Italian notes for context.
+Below is an overview of the main folders and scripts included in this repository, along with their roles in the project.
 
 ### `OL_generated_eq/`
-> *Italian:* “Permette di eseguire una simulazione basata sulle equazioni matematiche su MATLAB, senza controllo, del ballbot (senza manipolatore).”  
-Simulates the **open-loop mathematical model** of the ballbot (no control, no manipulator) to verify its inverted-pendulum behavior and validate the derived dynamics.
+Contains MATLAB scripts implementing the **open-loop dynamic model** of the ballbot without any control or manipulator.  
+These simulations reproduce the system’s natural inverted-pendulum behavior and are used to validate the analytical equations derived from the Lagrangian formulation.
 
 ### `PID_LQR_PI/`
-> *Italian:* “Implementa il controllo LQR–PI in cascata, per tunare i parametri e verificarne l’efficacia senza disturbi esterni.”  
-Implements the **cascaded LQR–PI controller** for closed-loop control of the ballbot base.  
-Used to tune gains and evaluate the controller’s stability in ideal (disturbance-free) conditions.
+Includes the **cascaded LQR–PI controller** used for closed-loop control of the ballbot base.  
+This module allows tuning of the LQR and PI gains and evaluation of controller performance in ideal, disturbance-free conditions.
 
 ### `manipulator_sim/`
-> *Italian:* “Permette il caricamento del modello Simscape (mesh, inertia, gripper…) del manipolatore integrato con le equazioni MATLAB.”  
-Contains the **Simscape/Simulink model of the UR5e manipulator and Robotiq 2F-85 gripper**, imported via URDF.  
-Integrates the manipulator with the ballbot base through Cartesian and spherical joints, ensuring consistent dynamics.
+Provides the **Simscape Multibody model** of the UR5e manipulator and the Robotiq 2F-85 gripper, imported from the URDF description.  
+The manipulator is dynamically coupled to the ballbot base through Cartesian and spherical joints to ensure consistent kinematics and inertial behavior.
 
 ### `Planning_sim/`
-> *Italian:* “Script principale. Lancia una simulazione completa di pianificazione, navigazione e manipolazione.”  
-The **main orchestration script** for full simulation.  
+Main orchestration script for **complete navigation and manipulation simulations**.  
 It performs:
-- Navigation path generation (RRT*).
-- Velocity profile computation.
-- Simulink model execution (`scheme_pos_control_yawcontrol`).
-- Transition to manipulation once the goal is reached.  
-Optionally, the user can switch to `scheme_fullbodycontrol` for full-body integrated experiments.
+- Path planning and trajectory generation using **RRT\***.  
+- Velocity profile computation and reference generation.  
+- Execution of the Simulink model `scheme_pos_control_yawcontrol`, which handles navigation, yaw control, and task sequencing.  
+After reaching the goal position, the script automatically triggers the manipulation phase.  
+It can optionally be configured to use `scheme_fullbodycontrol` for experimental full-body control simulations.
 
 ### `Planning_w_Adaptive/`
-> *Italian:* “Avvia una simulazione solo per la base mobile con controllo adattivo.”  
-Runs simulations using the **adaptive MRAC controller** for the mobile base only, based on the model reference technique.
+Contains simulation setups for the **adaptive MRAC controller**, focusing solely on the mobile base.  
+Used to evaluate the controller’s ability to adapt to parameter uncertainties and compensate for external disturbances.
 
 ### `runBatchTests.m` and `runBallbotSimulation.m`
-> *Italian:* “File utilizzati per eseguire test randomici in diversi scenari.”  
-Utilities to perform multiple randomized simulations under varying conditions (e.g., payload, initial tilt, friction).  
-All results are automatically saved as `.mat` archives.
+Utility scripts to perform **batch simulations** under randomized conditions (e.g., payload variations, initial tilt, friction coefficients).  
+Each run is automatically saved as a `.mat` file for later statistical and performance analysis.
 
 ### `analyze_results/`
-Contains analysis tools to process simulation data, visualize results, and compute correlation statistics.  
-This folder is used to reproduce the performance tables and figures shown in the report.
+Provides **data analysis and visualization tools** for processing the results of batch simulations.  
+Includes scripts for computing performance metrics, correlation tables, and reproducing the figures and statistics presented in the report.
 
 ### `ros2_moveit_integration/`
-Includes ROS 2 nodes for MoveIt Task Constructor integration:
-- HTN symbolic plan publishing.
-- Task sequence execution.
-- Rosbag trajectory export for MATLAB post-processing.
+Contains the ROS 2 integration modules used to connect MATLAB/Simulink with **MoveIt Task Constructor (MTC)**.  
+Includes:
+- Nodes for publishing symbolic HTN plans.  
+- Launch files for executing MTC task sequences.  
+- Tools for exporting joint-space trajectories via rosbag for post-processing and playback in MATLAB.
+
+---
 
 ---
 
@@ -204,7 +203,7 @@ These can be loaded in MATLAB and analyzed through the provided functions in `an
 ---
 
 ## Credits
-Developed by **Roberto Rocco** as part of the Master’s project in Automation and Robotics Engineering at the University of Naples.
+Developed by **Roberto Rocco** and by **Chiara Panagrosso** as part of the Master’s project in Automation and Robotics Engineering at the University of Naples.
 
 For further details, see the attached report:
 **FSR_Project_Rocco_Panagrosso.pdf**
