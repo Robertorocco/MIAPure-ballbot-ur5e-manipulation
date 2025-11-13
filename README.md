@@ -118,8 +118,6 @@ Includes:
 
 ---
 
----
-
 ## ▶️ How to Run Simulations
 
 1. **Open-loop model validation**  
